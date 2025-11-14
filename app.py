@@ -20,6 +20,19 @@ if not SERPAPI_KEY:
     st.error("SERPAPI_KEY not found in secrets. Add it to Streamlit Cloud settings.")
     st.stop()
 
+# Currency symbols by domain
+CURRENCY_MAP = {
+    "amazon.com": "$",
+    "amazon.co.uk": "£",
+    "amazon.de": "€",
+    "amazon.fr": "€",
+    "amazon.ca": "C$",
+    "amazon.es": "€",
+    "amazon.it": "€",
+    "amazon.co.jp": "¥",
+    "amazon.com.au": "A$"
+}
+
 # Sidebar inputs
 with st.sidebar:
     st.header("⚙️ Search Settings")
@@ -28,9 +41,11 @@ with st.sidebar:
     
     amazon_domain = st.selectbox(
         "Amazon Domain",
-        ["amazon.com", "amazon.co.uk", "amazon.de", "amazon.fr", "amazon.ca"],
+        ["amazon.com", "amazon.co.uk", "amazon.de", "amazon.fr", "amazon.ca", "amazon.es", "amazon.it"],
         index=1
     )
+    
+    currency = CURRENCY_MAP.get(amazon_domain, "$")
     
     num_pages = st.slider("Number of pages to scrape", 1, 5, 1, help="Each page = ~50 products")
     
@@ -42,6 +57,32 @@ with st.sidebar:
     
     min_rating = st.slider("Minimum Rating", 0.0, 5.0, 0.0, 0.5)
     min_reviews = st.number_input("Minimum Reviews", 0, 10000, 0, 100)
+
+def extract_brand(product):
+    """Extract brand from various possible fields"""
+    # Try to get brand from title (common pattern: "Brand Name Product...")
+    title = product.get("title", "")
+    
+    # Check if there's a brand in the title (usually first word or two)
+    if title:
+        # Sometimes brand is before a dash or comma
+        if " - " in title:
+            potential_brand = title.split(" - ")[0].strip()
+            return potential_brand
+        elif "," in title:
+            potential_brand = title.split(",")[0].strip()
+            # Only return if it's relatively short (likely a brand)
+            if len(potential_brand.split()) <= 3:
+                return potential_brand
+        else:
+            # Take first 1-2 words as potential brand
+            words = title.split()
+            if len(words) >= 2:
+                return f"{words[0]} {words[1]}"
+            elif len(words) == 1:
+                return words[0]
+    
+    return "Unknown"
 
 # Main analysis button
 if st.button("🔍 Analyse Products", type="primary"):
@@ -83,6 +124,7 @@ if st.button("🔍 Analyse Products", type="primary"):
                         "type": "Sponsored" if product.get("sponsored") else "Organic",
                         "position": product.get("position"),
                         "asin": product.get("asin"),
+                        "brand": extract_brand(product),
                         "title": product.get("title"),
                         "price": product.get("extracted_price"),
                         "old_price": product.get("extracted_old_price"),
@@ -132,7 +174,7 @@ if st.button("🔍 Analyse Products", type="primary"):
     
     # Summary metrics
     st.subheader("📊 Summary")
-    col1, col2, col3, col4, col5 = st.columns(5)
+    col1, col2, col3, col4, col5, col6 = st.columns(6)
     
     with col1:
         st.metric("Total Products", len(df))
@@ -142,29 +184,33 @@ if st.button("🔍 Analyse Products", type="primary"):
         st.metric("Sponsored", sponsored_count)
     
     with col3:
-        avg_price = df['price'].mean()
-        st.metric("Avg Price", f"${avg_price:.2f}" if pd.notna(avg_price) else "N/A")
+        unique_brands = df['brand'].nunique()
+        st.metric("Brands", unique_brands)
     
     with col4:
+        avg_price = df['price'].mean()
+        st.metric("Avg Price", f"{currency}{avg_price:.2f}" if pd.notna(avg_price) else "N/A")
+    
+    with col5:
         avg_rating = df['rating'].mean()
         st.metric("Avg Rating", f"{avg_rating:.2f}" if pd.notna(avg_rating) else "N/A")
     
-    with col5:
+    with col6:
         prime_pct = (df['prime'].sum() / len(df) * 100)
         st.metric("Prime %", f"{prime_pct:.0f}%")
     
     # Tabs for different views
-    tab1, tab2, tab3, tab4 = st.tabs(["📋 Products Table", "📈 Analytics", "🎯 Ad Analysis", "💰 Pricing"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📋 Products Table", "🏷️ Brands", "📈 Analytics", "🎯 Ad Analysis", "💰 Pricing"])
     
     with tab1:
         st.subheader("Product Listings")
         
         # Display columns
-        display_cols = ['type', 'position', 'title', 'price', 'rating', 'reviews', 'prime', 'discount_pct']
+        display_cols = ['type', 'position', 'brand', 'title', 'price', 'rating', 'reviews', 'prime', 'discount_pct']
         display_df = df[display_cols].copy()
         
         # Format for display
-        display_df['price'] = display_df['price'].apply(lambda x: f"${x:.2f}" if pd.notna(x) else "N/A")
+        display_df['price'] = display_df['price'].apply(lambda x: f"{currency}{x:.2f}" if pd.notna(x) else "N/A")
         display_df['discount_pct'] = display_df['discount_pct'].apply(lambda x: f"{x:.1f}%" if x > 0 else "-")
         display_df['prime'] = display_df['prime'].apply(lambda x: "✓" if x else "")
         
@@ -180,6 +226,41 @@ if st.button("🔍 Analyse Products", type="primary"):
         )
     
     with tab2:
+        st.subheader("🏷️ Brand Analysis")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.write("**Products by Brand**")
+            brand_counts = df['brand'].value_counts().head(15)
+            st.bar_chart(brand_counts)
+        
+        with col2:
+            st.write("**Average Price by Brand**")
+            brand_avg_price = df.groupby('brand')['price'].mean().sort_values(ascending=False).head(15)
+            if len(brand_avg_price) > 0:
+                st.bar_chart(brand_avg_price)
+            else:
+                st.info("Insufficient price data")
+        
+        # Brand details table
+        st.write("**Brand Performance Summary**")
+        brand_summary = df.groupby('brand').agg({
+            'asin': 'count',
+            'price': 'mean',
+            'rating': 'mean',
+            'reviews': 'sum',
+            'prime': 'sum'
+        }).round(2)
+        brand_summary.columns = ['Products', 'Avg Price', 'Avg Rating', 'Total Reviews', 'Prime Count']
+        brand_summary = brand_summary.sort_values('Products', ascending=False).head(20)
+        
+        # Format prices with currency
+        brand_summary['Avg Price'] = brand_summary['Avg Price'].apply(lambda x: f"{currency}{x:.2f}" if pd.notna(x) else "N/A")
+        
+        st.dataframe(brand_summary, use_container_width=True)
+    
+    with tab3:
         st.subheader("📈 Product Analytics")
         
         col1, col2 = st.columns(2)
@@ -211,7 +292,7 @@ if st.button("🔍 Analyse Products", type="primary"):
         else:
             st.info("Insufficient data for scatter plot")
     
-    with tab3:
+    with tab4:
         st.subheader("🎯 Advertising Analysis")
         
         # Sponsored vs Organic
@@ -233,28 +314,37 @@ if st.button("🔍 Analyse Products", type="primary"):
             else:
                 st.info("No sponsored products found")
         
+        # Brands with most ads
+        st.write("**Brands with Most Sponsored Listings**")
+        if len(sponsored_df) > 0:
+            sponsored_brands = sponsored_df['brand'].value_counts().head(10)
+            st.bar_chart(sponsored_brands)
+        else:
+            st.info("No sponsored products to analyse")
+        
         # Sponsored products table
         st.write("**Top Sponsored Products**")
-        sponsored_table = sponsored_df[['position', 'title', 'price', 'rating', 'reviews']].head(10)
+        sponsored_table = sponsored_df[['position', 'brand', 'title', 'price', 'rating', 'reviews']].head(10)
         if len(sponsored_table) > 0:
+            sponsored_table['price'] = sponsored_table['price'].apply(lambda x: f"{currency}{x:.2f}" if pd.notna(x) else "N/A")
             st.dataframe(sponsored_table, use_container_width=True)
         else:
             st.info("No sponsored products to display")
     
-    with tab4:
+    with tab5:
         st.subheader("💰 Pricing Analysis")
         
         col1, col2, col3 = st.columns(3)
         
         with col1:
-            st.metric("Lowest Price", f"${df['price'].min():.2f}" if df['price'].notna().any() else "N/A")
+            st.metric("Lowest Price", f"{currency}{df['price'].min():.2f}" if df['price'].notna().any() else "N/A")
         
         with col2:
-            st.metric("Highest Price", f"${df['price'].max():.2f}" if df['price'].notna().any() else "N/A")
+            st.metric("Highest Price", f"{currency}{df['price'].max():.2f}" if df['price'].notna().any() else "N/A")
         
         with col3:
             median_price = df['price'].median()
-            st.metric("Median Price", f"${median_price:.2f}" if pd.notna(median_price) else "N/A")
+            st.metric("Median Price", f"{currency}{median_price:.2f}" if pd.notna(median_price) else "N/A")
         
         # Price by type
         st.write("**Average Price by Product Type**")
@@ -263,12 +353,27 @@ if st.button("🔍 Analyse Products", type="primary"):
         
         # Products with discounts
         st.write("**Products with Active Discounts**")
-        discount_df = df[df['discount_pct'] > 0][['title', 'price', 'old_price', 'discount_pct']].sort_values('discount_pct', ascending=False)
+        discount_df = df[df['discount_pct'] > 0][['brand', 'title', 'price', 'old_price', 'discount_pct']].sort_values('discount_pct', ascending=False)
         if len(discount_df) > 0:
+            discount_df['price'] = discount_df['price'].apply(lambda x: f"{currency}{x:.2f}" if pd.notna(x) else "N/A")
+            discount_df['old_price'] = discount_df['old_price'].apply(lambda x: f"{currency}{x:.2f}" if pd.notna(x) else "N/A")
+            discount_df['discount_pct'] = discount_df['discount_pct'].apply(lambda x: f"{x:.1f}%")
             st.dataframe(discount_df.head(10), use_container_width=True)
         else:
             st.info("No products with active discounts")
+        
+        # Price by brand
+        st.write("**Price Range by Top Brands**")
+        top_brands = df['brand'].value_counts().head(10).index
+        brand_price_data = df[df['brand'].isin(top_brands)].groupby('brand')['price'].agg(['min', 'max', 'mean']).round(2)
+        brand_price_data.columns = ['Min Price', 'Max Price', 'Avg Price']
+        brand_price_data = brand_price_data.sort_values('Avg Price', ascending=False)
+        
+        for col in brand_price_data.columns:
+            brand_price_data[col] = brand_price_data[col].apply(lambda x: f"{currency}{x:.2f}" if pd.notna(x) else "N/A")
+        
+        st.dataframe(brand_price_data, use_container_width=True)
 
 # Footer
 st.divider()
-st.caption(f"Data from Amazon via SerpAPI | Domain: {amazon_domain}")
+st.caption(f"Data from Amazon via SerpAPI | Domain: {amazon_domain} | Currency: {currency}")
