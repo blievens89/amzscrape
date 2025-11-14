@@ -272,12 +272,3 @@ if st.button("🔍 Analyse Products", type="primary"):
 # Footer
 st.divider()
 st.caption(f"Data from Amazon via SerpAPI | Domain: {amazon_domain}")
-```
-
----
-
-### `requirements.txt`
-```
-streamlit
-pandas
-requests
