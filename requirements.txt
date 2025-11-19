@@ -1,3 +1,26 @@
-streamlit
-pandas
-requests
+# Core dependencies
+streamlit==1.31.0
+pandas==2.2.0
+requests==2.31.0
+
+# Data validation
+pydantic==2.6.0
+
+# Retry logic and resilience
+tenacity==8.2.3
+
+# Environment variables
+python-dotenv==1.0.0
+
+# Async support
+aiohttp==3.9.3
+
+# Testing
+pytest==8.0.0
+pytest-asyncio==0.23.5
+pytest-cov==4.1.0
+
+# Code quality
+black==24.2.0
+flake8==7.0.0
+mypy==1.8.0
